@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# cop — bootstrap: locates lib/cop/ relative to real script path and sources modules
+
+set -euo pipefail
+
+resolve_realpath() {
+  # readlink -f is GNU only (not available on macOS BSD)
+  # python3 fallback covers macOS Homebrew and any system without GNU coreutils
+  if readlink -f "$1" 2>/dev/null | grep -q .; then
+    readlink -f "$1"
+  elif command -v python3 &>/dev/null; then
+    python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$1"
+  else
+    # last resort: resolve one level manually
+    local target
+    target=$(readlink "$1" 2>/dev/null || echo "$1")
+    case "$target" in
+      /*) echo "$target" ;;
+      *)  echo "$(dirname "$1")/$target" ;;
+    esac
+  fi
+}
+
+SELF=$(resolve_realpath "${BASH_SOURCE[0]}")
+REPO_ROOT=$(dirname "$(dirname "$(dirname "$SELF")")")
+LIB="$REPO_ROOT/lib/cop"
+
+if [[ ! -d "$LIB" ]]; then
+  printf "cop: lib directory not found: %s\n" "$LIB" >&2
+  exit 1
+fi
+
+# shellcheck source=../../lib/cop/ui.sh
+source "$LIB/ui.sh"
+# shellcheck source=../../lib/cop/clipboard.sh
+source "$LIB/clipboard.sh"
+# shellcheck source=../../lib/cop/crypto.sh
+source "$LIB/crypto.sh"
+# shellcheck source=../../lib/cop/network.sh
+source "$LIB/network.sh"
+# shellcheck source=../../lib/cop/templates.sh
+source "$LIB/templates.sh"
+# shellcheck source=../../lib/cop/tests.sh
+source "$LIB/tests.sh"
+# shellcheck source=../../lib/cop/core.sh
+source "$LIB/core.sh"
+
+main "$@"
