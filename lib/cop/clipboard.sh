@@ -101,6 +101,12 @@ PASTE_CMDS=(wl-paste pbpaste powershell.exe xclip xsel termux-clipboard-get getc
 PASTE_USED=""
 
 find_paste_cmd() {
+  # Respect explicit override (mirrors find_copy_cmd behaviour)
+  [[ -n "${COP_CMD:-}" ]] && command -v "$COP_CMD" &>/dev/null && {
+    echo "$COP_CMD"
+    return 0
+  }
+
   for cmd in "${PASTE_CMDS[@]}"; do
     command -v "$cmd" &>/dev/null || continue
     case "$cmd" in

@@ -12,6 +12,12 @@ C_DIM=$'\033[2m'             # dimmed
 C_RESET=$'\033[0m'           # reset
 C_BOLD=$'\033[1m'            # bold
 
+# Honour NO_COLOR (https://no-color.org/) and dumb terminals
+if [[ -n "${NO_COLOR+x}" || "${TERM:-}" == "dumb" ]]; then
+  C_ROSE="" C_PEACH="" C_MINT="" C_SKY="" C_LAVENDER="" C_GOLD=""
+  C_CORAL="" C_DIM="" C_RESET="" C_BOLD=""
+fi
+
 # --- ASCII Art (single default banner) ---------------------------------------
 art_banner() {
   cat <<'EOF'
@@ -59,9 +65,9 @@ log() { printf "📋 %s%s%s\n" "$C_CORAL" "$*" "$C_RESET" >&2; }
 format_size() {
   local bytes=$1
   if ((bytes >= 1048576)); then
-    printf "%.2f MB" "$(echo "scale=2; $bytes/1048576" | bc)"
+    printf "%.2f MB" "$(( bytes * 100 / 1048576 ))e-2"
   elif ((bytes >= 1024)); then
-    printf "%.2f kB" "$(echo "scale=2; $bytes/1024" | bc)"
+    printf "%.2f kB" "$(( bytes * 100 / 1024 ))e-2"
   else
     printf "%d B" "$bytes"
   fi
@@ -149,7 +155,7 @@ ${C_GOLD}Examples:${C_RESET}
   ${C_DIM}echo "more" | cop -a${C_RESET}    append to existing clipboard
   ${C_DIM}cop -a file.txt${C_RESET}         append file to existing clipboard
 
-  ${C_DIM}ls | cop -s${C_RESET}             copy and also print what was copied
+  ${C_DIM}ls | cop -t${C_RESET}             copy and also print what was copied
 
   ${C_DIM}cop --notes${C_RESET}             open/create NOTES.md here
   ${C_DIM}notes${C_RESET}                   same (notes is a symlink to cop)
