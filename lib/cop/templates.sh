@@ -2,6 +2,13 @@
 
 do_template() {
   local name="$1"
+
+  if [[ -z "$name" ]]; then
+    printf "📋 %sNo template name given.%s Available templates:\n" "$C_CORAL" "$C_RESET" >&2
+    list_templates >&2
+    exit 1
+  fi
+
   local src="$LIB/templates/$name"
 
   if [[ ! -f "$src" ]]; then

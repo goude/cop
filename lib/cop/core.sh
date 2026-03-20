@@ -127,13 +127,6 @@ main() {
   [[ "$basename" == "pas" ]]   && paste=1
   [[ "$basename" == "notes" ]] && { do_notes; exit 0; }
 
-  # Run tests
-  if [[ "${1:-}" == "--test" ]]; then
-    shift
-    cop_run_tests
-    exit 0
-  fi
-
   # Parse options
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -142,6 +135,7 @@ main() {
       exit 0
       ;;
     --notes)  do_notes; exit 0 ;;
+    --test)   cop_run_tests; exit 0 ;;
     --info)   info_flag=1 ;;
     --paste)  paste=1 ;;
     --network) network=1 ;;
@@ -217,7 +211,7 @@ main() {
 
   # Copy mode
   local payload
-  if [[ $# > 0 ]]; then
+  if (( $# > 0 )); then
     # Prefer explicit files over stdin, even in pipelines.
     payload=$(cat -- "$@")
   elif [[ ! -t 0 ]]; then

@@ -14,7 +14,7 @@ kv_send() {
     return 1
   }
   printf "📋 %s✓ Synced%s to %scloud clipboard%s\n" \
-    "$C_MINT" "$C_RESET" >&2
+    "$C_MINT" "$C_RESET" "$C_SKY" "$C_RESET" >&2
 }
 
 kv_fetch() {
