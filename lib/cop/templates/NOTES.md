@@ -1,7 +1,7 @@
 # NOTES.md
 
-Note text.
+--> Type `2jC` to start editing here, and write what you will. <--
 
 ---
 
-[NOTES.md convention](https://github.com/goude/NOTES.md)
+Follows the [NOTES.md convention](https://github.com/goude/NOTES.md).
