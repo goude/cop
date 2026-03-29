@@ -132,6 +132,26 @@ cop_run_tests() {
     EDITOR="true" "$COP_BIN" --notes
     grep -q "extra" NOTES.md || fail "--notes overwrote existing NOTES.md"
 
+    # 11) directory copy: single directory arg gets delimited with filenames
+    mkdir -p subdir
+    printf 'alpha content\n' >"$tmpdir/subdir/alpha.txt"
+    printf 'beta content\n'  >"$tmpdir/subdir/beta.txt"
+
+    "$COP_BIN" subdir
+    out="$("$COP_BIN" -p)"
+    [[ "$out" == *"=== "* ]]          || fail "directory copy missing delimiter"
+    [[ "$out" == *"alpha.txt"* ]]     || fail "directory copy missing filename alpha.txt"
+    [[ "$out" == *"beta.txt"* ]]      || fail "directory copy missing filename beta.txt"
+    [[ "$out" == *"alpha content"* ]] || fail "directory copy missing alpha content"
+    [[ "$out" == *"beta content"* ]]  || fail "directory copy missing beta content"
+
+    # 12) explicit multi-file args: concatenated content, no delimiters
+    "$COP_BIN" subdir/alpha.txt subdir/beta.txt
+    out="$("$COP_BIN" -p)"
+    expect_concat="$(cat subdir/alpha.txt subdir/beta.txt)"
+    assert_eq "explicit files no delimiters" "$out" "$expect_concat"
+    [[ "$out" != *"==="* ]] || fail "explicit file args should not produce delimiters"
+
     echo "All cop self tests passed."
   )
 }

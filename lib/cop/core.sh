@@ -211,7 +211,39 @@ main() {
 
   # Copy mode
   local payload
-  if (( $# > 0 )); then
+  if (( $# == 1 )) && [[ -d "$1" ]]; then
+    # Directory mode: expand with simple glob, delimit files with filepaths
+    local dir="$1"
+    local repo_root
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+
+    payload=""
+    local sep=""
+    for f in "$dir"/*; do
+      [[ -f "$f" ]] || continue
+      local abs_f display_path
+      if [[ "$f" = /* ]]; then
+        abs_f="$f"
+      else
+        abs_f="$PWD/$f"
+      fi
+      if [[ -n "$repo_root" && "$abs_f" == "$repo_root/"* ]]; then
+        display_path="${abs_f#$repo_root/}"
+      else
+        display_path="$(basename "$f")"
+      fi
+      local content
+      content=$(cat -- "$f")
+      payload+="${sep}=== ${display_path} ===
+${content}"
+      sep=$'\n'
+    done
+
+    if [[ -z "$payload" ]]; then
+      log "No files found in directory: $dir"
+      exit 1
+    fi
+  elif (( $# > 0 )); then
     # Prefer explicit files over stdin, even in pipelines.
     payload=$(cat -- "$@")
   elif [[ ! -t 0 ]]; then
