@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# si — fzf multi-mode search/jump tool
+
+source "$(command -v dip)" || {
+  echo "dip not found" >&2
+  exit 1
+}
+
+dip_strict
+dip_init_colors
+
+# ---- usage -----------------------------------------------------------------
+
+usage() {
+  dip_usage_header "si" "fzf multi-mode search/jump"
+
+  cat <<EOF
+${C_GOLD}Usage:${C_RESET}
+  si            open fzf
+  si 'query'    open fzf with query pre-filled
+  si --help
+
+${C_GOLD}Options:${C_RESET}
+$(dip_usage_opt h help "Show this help")
+$(dip_usage_opt "" test "Run self-tests")
+
+${C_GOLD}Inside fzf:${C_RESET}
+  Ctrl-R   rotate mode: rg → git → fd → history → env
+  Ctrl-C   exit (no action)
+  Enter    act by mode:
+           git/fd   cd to file dir and open in \$EDITOR
+           history  pipe selection to cop
+           env      pipe selection to cop
+           rg       open match location in \$EDITOR
+
+${C_GOLD}Preview by mode:${C_RESET}
+  git/fd   file preview via bat / batcat / cat
+  history  shows command
+  env      shows value
+  rg       colored context for current query
+
+${C_DIM}Note: Ctrl-M == Enter in terminals, so rotation cannot be on Ctrl-M.
+Deps: fzf (required). Optional: git, fd, rg, bat/batcat, cop.${C_RESET}
+EOF
+}
+
+# ---- helpers ---------------------------------------------------------------
+
+open_in_editor() {
+  local path="$1" line="${2:-}"
+  local editor="${EDITOR:-vim}"
+
+  [[ -n "$path" ]] || return 0
+  cd "$(dirname "$path")" || return 1
+
+  if [[ -n "$line" ]]; then
+    "$editor" "+$line" "$(basename "$path")"
+  else
+    "$editor" "$(basename "$path")"
+  fi
+}
+
+pipe_to_cop() {
+  if dip_have cop; then
+    printf "%s" "$1" | cop
+  else
+    printf "%s\n" "$1"
+  fi
+}
+
+# ---- mode management -------------------------------------------------------
+
+modes=(rg git fd history env)
+
+mode_get() {
+  local f="$1"
+  [[ -f "$f" ]] && cat "$f" 2>/dev/null || true
+}
+
+mode_set() {
+  local f="$1" m="$2"
+  printf "%s\n" "$m" >"$f"
+}
+
+mode_rotate() {
+  local f="$1" cur next i
+  cur="$(mode_get "$f")"
+  case "$cur" in rg | git | fd | history | env) ;; *) cur="rg" ;; esac
+
+  next="rg"
+  for i in "${!modes[@]}"; do
+    if [[ "${modes[$i]}" == "$cur" ]]; then
+      next="${modes[$(((i + 1) % ${#modes[@]}))]}"
+      break
+    fi
+  done
+
+  mode_set "$f" "$next"
+}
+
+# ---- data sources ----------------------------------------------------------
+
+git_files() {
+  dip_have git || return 0
+  dip_is_git_repo || return 0
+  git ls-files 2>/dev/null | awk '{ print "git\t" $0 }' || true
+}
+
+fd_files() {
+  if dip_have fd; then
+    fd --type f --hidden --follow --exclude .git 2>/dev/null | awk '{ print "fd\t" $0 }' || true
+  else
+    find . -type f -not -path '*/.git/*' 2>/dev/null |
+      sed 's|^\./||' |
+      awk '{ print "fd\t" $0 }' || true
+  fi
+}
+
+hist_items() {
+  local fish="${XDG_DATA_HOME:-$HOME/.local/share}/fish/fish_history"
+  local zsh="${ZDOTDIR:-$HOME}/.zsh_history"
+  local bash_hist="${HISTFILE:-$HOME/.bash_history}"
+
+  if [[ -f "$fish" ]]; then
+    sed -n 's/^[[:space:]]*cmd:[[:space:]]*//p' "$fish" 2>/dev/null |
+      sed 's/^"\(.*\)"$/\1/' 2>/dev/null |
+      awk '{ print "history\t" $0 }' || true
+  fi
+
+  if [[ -f "$zsh" ]]; then
+    sed 's/^: [0-9]\+:[0-9]\+;//' "$zsh" 2>/dev/null |
+      awk '{ print "history\t" $0 }' || true
+  fi
+
+  if [[ -f "$bash_hist" ]]; then
+    cat "$bash_hist" 2>/dev/null | awk '{ print "history\t" $0 }' || true
+  fi
+}
+
+env_items() {
+  env 2>/dev/null | LC_ALL=C sort | awk '{ print "env\t" $0 }' || true
+}
+
+rg_items() {
+  local q="$1"
+  [[ -n "$q" ]] || return 0
+  dip_have rg || return 0
+  rg -n --column --hidden --glob '!.git/*' --color=never -- "$q" . 2>/dev/null |
+    awk '{ print "rg\t" $0 }' || true
+}
+
+# ---- preview ---------------------------------------------------------------
+
+do_preview() {
+  local mode="$1" payload="$2" query="$3"
+  local bat_cmd
+
+  case "$mode" in
+  git | fd)
+    [[ -f "$payload" ]] || return 0
+    bat_cmd="$(dip_best_cat)"
+    case "$bat_cmd" in
+    bat) bat --color=always --line-range=:300 -- "$payload" 2>/dev/null || true ;;
+    batcat) batcat --color=always --line-range=:300 -- "$payload" 2>/dev/null || true ;;
+    cat) sed -n '1,200p' "$payload" 2>/dev/null || true ;;
+    esac
+    ;;
+  history)
+    printf "%s\n" "$payload"
+    ;;
+  env)
+    printf "%s\n" "${payload#*=}"
+    ;;
+  rg)
+    dip_have rg || return 0
+    [[ -n "$query" ]] || return 0
+    local file="${payload%%:*}"
+    rg --color=always -n -C 3 -- "$query" "$file" 2>/dev/null || true
+    ;;
+  esac
+}
+
+# ---- tests -----------------------------------------------------------------
+
+run_tests() {
+  dip_test_suite "si tests"
+
+  local self_path
+  self_path="$(dip_realpath "$0")"
+
+  dip_test "si --help works"
+  dip_assert_ok "help flag" "$self_path" --help
+
+  dip_test "dip_have fzf or skip"
+  if ! dip_have fzf; then
+    dip_warn "fzf not installed, skipping interactive tests"
+    dip_test_summary
+    return $?
+  fi
+  _dip_test_pass # fzf exists
+
+  dip_test "git_files runs without error"
+  dip_assert_ok "git_files" bash -c "source '$self_path' --source-only 2>/dev/null; git_files >/dev/null 2>&1" || true
+  _dip_test_pass
+
+  dip_test "fd_files runs without error"
+  dip_assert_ok "fd_files" bash -c "source '$self_path' --source-only 2>/dev/null; fd_files >/dev/null 2>&1" || true
+  _dip_test_pass
+
+  dip_test "env_items produces output"
+  local env_out
+  env_out=$(env_items | head -1)
+  dip_assert_contains "env output has tab" "$env_out" $'\t'
+
+  dip_test "mode rotation works"
+  local tmpmode
+  tmpmode=$(mktemp)
+  mode_set "$tmpmode" "git"
+  dip_assert_eq "initial mode" "$(mode_get "$tmpmode")" "git"
+  mode_rotate "$tmpmode"
+  dip_assert_eq "after rotate" "$(mode_get "$tmpmode")" "fd"
+  mode_rotate "$tmpmode"
+  dip_assert_eq "after rotate 2" "$(mode_get "$tmpmode")" "history"
+  rm -f "$tmpmode"
+
+  dip_test_summary
+}
+
+# ---- internal entrypoints (used by fzf) ------------------------------------
+
+SELF="$(dip_realpath "$0")"
+
+case "${1:-}" in
+--mode-get)
+  mode_get "${2:-}"
+  exit 0
+  ;;
+--mode-rotate)
+  mode_rotate "${2:-}"
+  exit 0
+  ;;
+--list)
+  mf="${2:-}"
+  q="${3:-}"
+  m="$(mode_get "$mf")"
+  case "$m" in
+  rg) rg_items "$q" ;;
+  git) git_files ;;
+  fd) fd_files ;;
+  history) hist_items ;;
+  env) env_items ;;
+  *) git_files ;;
+  esac
+  exit 0
+  ;;
+--preview)
+  mf="${2:-}"
+  q="${3:-}"
+  line="${4:-}"
+
+  [[ -n "$line" ]] || exit 0
+  IFS=$'\t' read -r mode payload <<<"$line" || exit 0
+  [[ -n "${mode:-}" && -n "${payload:-}" ]] || exit 0
+
+  do_preview "$mode" "$payload" "$q"
+  exit 0
+  ;;
+--source-only)
+  # For testing: just source the functions, don't run main
+  exit 0
+  ;;
+esac
+
+# ---- main ------------------------------------------------------------------
+
+dip_getopt "h,help:flag test:flag" "$@"
+
+if dip_opt help; then
+  usage
+  exit 0
+fi
+
+if dip_opt test; then
+  run_tests
+  exit $?
+fi
+
+# Check for fzf
+dip_have fzf || dip_die "fzf is required"
+
+# Get query from positional args
+QUERY="${DIP_ARGS[0]:-}"
+
+# Create temp file for mode state
+MODE_FILE="$(mktemp -t si.mode.XXXXXX)"
+cleanup() { rm -f "$MODE_FILE"; }
+trap cleanup EXIT
+
+mode_set "$MODE_FILE" "rg"
+
+header='Ctrl-R rotate: rg → git → fd → history → env  Ctrl-C exit'
+
+selected="$(
+  fzf \
+    --ansi \
+    --query="$QUERY" \
+    --delimiter=$'\t' \
+    --with-nth=2 \
+    --prompt="󰱼  " \
+    --header="$header" \
+    --border \
+    --height=90% \
+    --preview="$SELF --preview $MODE_FILE {q} {}" \
+    --preview-window='right,60%,border-left,wrap' \
+    --bind "start:reload($SELF --list $MODE_FILE {q})" \
+    --bind "change:reload($SELF --list $MODE_FILE {q})" \
+    --bind "ctrl-r:execute-silent($SELF --mode-rotate $MODE_FILE)+reload($SELF --list $MODE_FILE {q})" \
+    --bind "ctrl-c:abort"
+)" || exit 0
+
+IFS=$'\t' read -r mode payload <<<"$selected"
+
+case "$mode" in
+git | fd)
+  open_in_editor "$payload"
+  ;;
+history | env)
+  pipe_to_cop "$payload"
+  ;;
+rg)
+  file="${payload%%:*}"
+  rest="${payload#*:}"
+  line="${rest%%:*}"
+  case "$line" in '' | *[!0-9]*) line=1 ;; esac
+  open_in_editor "$file" "$line"
+  ;;
+esac

@@ -1,0 +1,941 @@
+#!/usr/bin/env bash
+# dip — DoItPoorly shared library for bash scripts
+# Source this file or run directly to execute tests on scripts using it.
+#
+# Usage in scripts:
+#   source "$(command -v dip)" || { echo "dip not found" >&2; exit 1; }
+#
+# Run all tests:
+#   dip [--verbose]
+#
+# Compatible with Bash 3.2+ (macOS default)
+
+# Guard against double-sourcing
+[[ -n "${_DIP_LOADED:-}" ]] && return 0
+_DIP_LOADED=1
+
+# Library version
+DIP_VERSION="0.1.0"
+
+# Minimum bash version check (informational)
+dip_check_bash() {
+  local major="${BASH_VERSINFO[0]:-0}"
+  local minor="${BASH_VERSINFO[1]:-0}"
+  if [[ "$major" -lt 3 ]] || [[ "$major" -eq 3 && "$minor" -lt 2 ]]; then
+    echo "dip: warning: Bash $major.$minor detected, 3.2+ recommended" >&2
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Shell Safety
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dip_strict() {
+  set -euo pipefail
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Terminal Detection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dip_is_tty() {
+  [[ -t 1 ]]
+}
+
+dip_is_tty_err() {
+  [[ -t 2 ]]
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Color Definitions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Initialize colors based on terminal capability and NO_COLOR env var
+dip_init_colors() {
+  local force="${1:-}"
+
+  # Reset all to empty first
+  C_RESET="" C_BOLD="" C_DIM="" C_ITALIC="" C_UNDERLINE=""
+  C_BLACK="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_MAGENTA="" C_CYAN="" C_WHITE=""
+  C_BRIGHT_BLACK="" C_BRIGHT_RED="" C_BRIGHT_GREEN="" C_BRIGHT_YELLOW=""
+  C_BRIGHT_BLUE="" C_BRIGHT_MAGENTA="" C_BRIGHT_CYAN="" C_BRIGHT_WHITE=""
+  C_ROSE="" C_PEACH="" C_MINT="" C_SKY="" C_LAVENDER="" C_GOLD="" C_CORAL=""
+
+  # Check if colors should be enabled
+  if [[ "$force" == "force" ]] || { [[ -z "${NO_COLOR:-}" ]] && dip_is_tty; }; then
+    C_RESET=$'\033[0m'
+    C_BOLD=$'\033[1m'
+    C_DIM=$'\033[2m'
+    C_ITALIC=$'\033[3m'
+    C_UNDERLINE=$'\033[4m'
+
+    C_BLACK=$'\033[30m'
+    C_RED=$'\033[31m'
+    C_GREEN=$'\033[32m'
+    C_YELLOW=$'\033[33m'
+    C_BLUE=$'\033[34m'
+    C_MAGENTA=$'\033[35m'
+    C_CYAN=$'\033[36m'
+    C_WHITE=$'\033[37m'
+
+    C_BRIGHT_BLACK=$'\033[90m'
+    C_BRIGHT_RED=$'\033[91m'
+    C_BRIGHT_GREEN=$'\033[92m'
+    C_BRIGHT_YELLOW=$'\033[93m'
+    C_BRIGHT_BLUE=$'\033[94m'
+    C_BRIGHT_MAGENTA=$'\033[95m'
+    C_BRIGHT_CYAN=$'\033[96m'
+    C_BRIGHT_WHITE=$'\033[97m'
+
+    C_ROSE=$'\033[38;5;218m'
+    C_PEACH=$'\033[38;5;223m'
+    C_MINT=$'\033[38;5;158m'
+    C_SKY=$'\033[38;5;117m'
+    C_LAVENDER=$'\033[38;5;183m'
+    C_GOLD=$'\033[38;5;222m'
+    C_CORAL=$'\033[38;5;210m'
+  fi
+}
+
+dip_export_colors() {
+  export C_RESET C_BOLD C_DIM C_ITALIC C_UNDERLINE
+  export C_BLACK C_RED C_GREEN C_YELLOW C_BLUE C_MAGENTA C_CYAN C_WHITE
+  export C_BRIGHT_BLACK C_BRIGHT_RED C_BRIGHT_GREEN C_BRIGHT_YELLOW
+  export C_BRIGHT_BLUE C_BRIGHT_MAGENTA C_BRIGHT_CYAN C_BRIGHT_WHITE
+  export C_ROSE C_PEACH C_MINT C_SKY C_LAVENDER C_GOLD C_CORAL
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Command/Environment Detection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dip_have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+dip_is_wayland() {
+  [[ -n "${WAYLAND_DISPLAY:-}" && -S "/run/user/$(id -u)/${WAYLAND_DISPLAY}" ]]
+}
+
+dip_is_x11() {
+  [[ -n "${DISPLAY:-}" ]]
+}
+
+dip_is_git_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+dip_best_pager() {
+  if dip_have bat; then
+    printf "bat"
+  elif dip_have batcat; then
+    printf "batcat"
+  elif dip_have less; then
+    printf "less"
+  else
+    printf "cat"
+  fi
+}
+
+dip_best_cat() {
+  if dip_have bat; then
+    printf "bat"
+  elif dip_have batcat; then
+    printf "batcat"
+  else
+    printf "cat"
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Logging & Output
+# ═══════════════════════════════════════════════════════════════════════════════
+
+: "${DIP_APP_NAME:=${0##*/}}"
+
+_DIP_LOG_DEBUG=0
+_DIP_LOG_INFO=1
+_DIP_LOG_WARN=2
+_DIP_LOG_ERROR=3
+
+: "${DIP_LOG_LEVEL:=$_DIP_LOG_INFO}"
+
+_dip_log() {
+  local level="$1" prefix="$2" color="$3"
+  shift 3
+  [[ "$level" -ge "$DIP_LOG_LEVEL" ]] || return 0
+  printf "%s%s%s %s%s%s\n" "$color" "$prefix" "$C_RESET" "$color" "$*" "$C_RESET" >&2
+}
+
+dip_debug() { _dip_log $_DIP_LOG_DEBUG "DEBUG" "$C_DIM" "$@"; }
+dip_info()  { _dip_log $_DIP_LOG_INFO  "ℹ"     "$C_CYAN" "$@"; }
+dip_warn()  { _dip_log $_DIP_LOG_WARN  "⚠"     "$C_YELLOW" "$@"; }
+dip_error() { _dip_log $_DIP_LOG_ERROR "✖"     "$C_RED" "$@"; }
+
+dip_log() {
+  local icon="${1:-•}"
+  shift
+  printf "%s %s%s%s\n" "$icon" "$C_CYAN" "$*" "$C_RESET" >&2
+}
+
+dip_die() {
+  local code=1
+  if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+    code="$1"
+    shift
+  fi
+  printf "%s✖ %s:%s %s\n" "$C_RED" "$DIP_APP_NAME" "$C_RESET" "$*" >&2
+  exit "$code"
+}
+
+dip_hr() {
+  local char="${1:-─}" width="${2:-60}" color="${3:-$C_DIM}"
+  local line="" i
+  for ((i = 0; i < width; i++)); do
+    line+="$char"
+  done
+  printf "%s%s%s\n" "$color" "$line" "$C_RESET"
+}
+
+dip_rainbow_line() {
+  local width="${1:-40}"
+  local out="" i
+  local c0="$C_GOLD" c1="$C_PEACH" c2="$C_CORAL" c3="$C_ROSE" c4="$C_LAVENDER" c5="$C_SKY" c6="$C_MINT"
+  for ((i = 0; i < width; i++)); do
+    case $((i % 7)) in
+      0) out+="${c0}━" ;; 1) out+="${c1}━" ;; 2) out+="${c2}━" ;;
+      3) out+="${c3}━" ;; 4) out+="${c4}━" ;; 5) out+="${c5}━" ;; 6) out+="${c6}━" ;;
+    esac
+  done
+  printf "%s%s\n" "$out" "$C_RESET"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Argument Parsing (Bash 3.2 compatible)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Option storage - using simple delimited strings instead of associative arrays
+# Format: "|name=value|name=value|"
+_DIP_OPT_STORE=""
+
+# Positional arguments array
+DIP_ARGS=()
+
+# Internal: store an option value
+_dip_opt_set() {
+  local name="$1" value="$2"
+  # Remove existing entry if present, then add new one
+  _DIP_OPT_STORE=$(printf "%s" "$_DIP_OPT_STORE" | sed "s/|${name}=[^|]*|/|/g")
+  _DIP_OPT_STORE="${_DIP_OPT_STORE}|${name}=${value}|"
+}
+
+# Internal: get an option value
+_dip_opt_get() {
+  local name="$1"
+  if [[ "$_DIP_OPT_STORE" == *"|${name}="* ]]; then
+    local tmp="${_DIP_OPT_STORE#*|${name}=}"
+    printf "%s" "${tmp%%|*}"
+    return 0
+  fi
+  return 1
+}
+
+# Check if an option was set
+dip_opt() {
+  local name="$1"
+  [[ "$_DIP_OPT_STORE" == *"|${name}="* ]]
+}
+
+# Get option value with default
+dip_opt_val() {
+  local name="$1" default="${2:-}"
+  local val
+  if val=$(_dip_opt_get "$name"); then
+    printf "%s" "$val"
+  else
+    printf "%s" "$default"
+  fi
+}
+
+# Parse command-line options
+# Usage: dip_getopt "h,help:flag v,verbose:flag o,output:val" "$@"
+dip_getopt() {
+  local spec="$1"
+  shift
+
+  # Reset storage
+  _DIP_OPT_STORE=""
+  DIP_ARGS=()
+
+  # Build lookup data from spec
+  # Format: "|short:canonical:type|" for each spec item
+  local spec_data=""
+  local item names type short_name long_name canonical name
+  
+  # Save and set IFS
+  local old_ifs="$IFS"
+  IFS=' '
+  for item in $spec; do
+    names="${item%%:*}"
+    type="${item#*:}"
+    [[ "$type" == "$item" ]] && type="flag"
+
+    short_name=""
+    long_name=""
+    IFS=','
+    for name in $names; do
+      if [[ ${#name} -eq 1 ]]; then
+        short_name="$name"
+      else
+        long_name="$name"
+      fi
+    done
+    IFS=' '
+
+    canonical="${long_name:-$short_name}"
+    [[ -n "$short_name" ]] && spec_data="${spec_data}|s:${short_name}:${canonical}:${type}"
+    [[ -n "$long_name" ]] && spec_data="${spec_data}|l:${long_name}:${canonical}:${type}"
+  done
+  spec_data="${spec_data}|"
+  IFS="$old_ifs"
+
+  # Helper: lookup by short option -> "canonical:type"
+  _lu_short() {
+    local s="$1"
+    if [[ "$spec_data" == *"|s:${s}:"* ]]; then
+      local tmp="${spec_data#*|s:${s}:}"
+      local rest="${tmp%%|*}"
+      printf "%s" "$rest"
+    else
+      printf "%s:flag" "$s"
+    fi
+  }
+
+  # Helper: lookup by long option -> "canonical:type"
+  _lu_long() {
+    local l="$1"
+    if [[ "$spec_data" == *"|l:${l}:"* ]]; then
+      local tmp="${spec_data#*|l:${l}:}"
+      local rest="${tmp%%|*}"
+      printf "%s" "$rest"
+    else
+      printf "%s:flag" "$l"
+    fi
+  }
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --)
+        shift
+        while [[ $# -gt 0 ]]; do
+          DIP_ARGS+=("$1")
+          shift
+        done
+        break
+        ;;
+      --*=*)
+        local opt="${1#--}"
+        local opt_name="${opt%%=*}"
+        local opt_value="${opt#*=}"
+        local lookup
+        lookup=$(_lu_long "$opt_name")
+        local canonical="${lookup%%:*}"
+        _dip_opt_set "$canonical" "$opt_value"
+        ;;
+      --no-*)
+        local opt_name="${1#--no-}"
+        local lookup
+        lookup=$(_lu_long "$opt_name")
+        local canonical="${lookup%%:*}"
+        _dip_opt_set "$canonical" ""
+        ;;
+      --*)
+        local opt_name="${1#--}"
+        local lookup
+        lookup=$(_lu_long "$opt_name")
+        local canonical="${lookup%%:*}"
+        local opt_type="${lookup#*:}"
+        if [[ "$opt_type" == "val" && $# -gt 1 ]]; then
+          shift
+          _dip_opt_set "$canonical" "$1"
+        else
+          _dip_opt_set "$canonical" "1"
+        fi
+        ;;
+      -*)
+        local opts="${1#-}"
+        local len=${#opts}
+        local i char lookup canonical opt_type
+        for ((i = 0; i < len; i++)); do
+          char="${opts:i:1}"
+          lookup=$(_lu_short "$char")
+          canonical="${lookup%%:*}"
+          opt_type="${lookup#*:}"
+          if [[ "$opt_type" == "val" ]]; then
+            if [[ $((i)) -eq $((len - 1)) && $# -gt 1 ]]; then
+              shift
+              _dip_opt_set "$canonical" "$1"
+            else
+              _dip_opt_set "$canonical" ""
+            fi
+          else
+            _dip_opt_set "$canonical" "1"
+          fi
+        done
+        ;;
+      *)
+        DIP_ARGS+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  # Cleanup helpers
+  unset -f _lu_short _lu_long 2>/dev/null || true
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Usage/Help Formatting
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dip_usage_header() {
+  local name="${1:-$DIP_APP_NAME}"
+  local tagline="${2:-}"
+  printf "%s%s%s" "$C_BOLD" "$name" "$C_RESET"
+  [[ -n "$tagline" ]] && printf " — %s%s%s" "$C_DIM" "$tagline" "$C_RESET"
+  printf "\n\n"
+}
+
+dip_usage_section() {
+  printf "%s%s%s\n" "$C_GOLD" "$1" "$C_RESET"
+}
+
+dip_usage_opt() {
+  local short="${1:-}"
+  local long="${2:-}"
+  local desc="$3"
+  local opt_str=""
+
+  if [[ -n "$short" && -n "$long" ]]; then
+    opt_str="  ${C_SKY}-${short}${C_RESET}, ${C_SKY}--${long}${C_RESET}"
+  elif [[ -n "$short" ]]; then
+    opt_str="  ${C_SKY}-${short}${C_RESET}"
+  elif [[ -n "$long" ]]; then
+    opt_str="      ${C_SKY}--${long}${C_RESET}"
+  fi
+
+  printf "%-32s %s\n" "$opt_str" "$desc"
+}
+
+dip_usage_example() {
+  local cmd="$1"
+  local desc="${2:-}"
+  printf "  %s%s%s" "$C_DIM" "$cmd" "$C_RESET"
+  [[ -n "$desc" ]] && printf "  %s# %s%s" "$C_DIM" "$desc" "$C_RESET"
+  printf "\n"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Test Framework
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Test state (plain variables, no declare -g)
+_DIP_TEST_COUNT=0
+_DIP_TEST_PASSED=0
+_DIP_TEST_FAILED=0
+_DIP_TEST_CURRENT=""
+_DIP_TEST_VERBOSE="${DIP_TEST_VERBOSE:-0}"
+
+dip_test_suite() {
+  local name="$1"
+  _DIP_TEST_COUNT=0
+  _DIP_TEST_PASSED=0
+  _DIP_TEST_FAILED=0
+  printf "\n%s━━━ %s ━━━%s\n" "$C_BOLD" "$name" "$C_RESET"
+}
+
+dip_test() {
+  local name="$1"
+  _DIP_TEST_CURRENT="$name"
+  _DIP_TEST_COUNT=$((_DIP_TEST_COUNT + 1))
+  if [[ "$_DIP_TEST_VERBOSE" -ne 0 ]]; then
+    printf "  %s•%s %s... " "$C_DIM" "$C_RESET" "$name"
+  fi
+  return 0
+}
+
+_dip_test_pass() {
+  _DIP_TEST_PASSED=$((_DIP_TEST_PASSED + 1))
+  if [[ "$_DIP_TEST_VERBOSE" -ne 0 ]]; then
+    printf "%s✓%s\n" "$C_GREEN" "$C_RESET"
+  else
+    printf "%s.%s" "$C_GREEN" "$C_RESET"
+  fi
+}
+
+_dip_test_fail() {
+  local msg="$1"
+  _DIP_TEST_FAILED=$((_DIP_TEST_FAILED + 1))
+  if [[ "$_DIP_TEST_VERBOSE" -ne 0 ]]; then
+    printf "%s✗%s\n" "$C_RED" "$C_RESET"
+    printf "    %s%s%s\n" "$C_RED" "$msg" "$C_RESET"
+  else
+    printf "%s✗%s" "$C_RED" "$C_RESET"
+  fi
+}
+
+dip_test_summary() {
+  printf "\n"
+  if [[ "$_DIP_TEST_FAILED" -eq 0 ]]; then
+    printf "%s✓ All %d tests passed%s\n" "$C_GREEN" "$_DIP_TEST_COUNT" "$C_RESET"
+  else
+    printf "%s✗ %d/%d tests failed%s\n" "$C_RED" "$_DIP_TEST_FAILED" "$_DIP_TEST_COUNT" "$C_RESET"
+  fi
+  return "$_DIP_TEST_FAILED"
+}
+
+dip_assert_eq() {
+  local msg="$1" got="$2" expect="$3"
+  if [[ "$got" == "$expect" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected [$expect], got [$got]"
+    return 1
+  fi
+}
+
+dip_assert_ne() {
+  local msg="$1" got="$2" not_expect="$3"
+  if [[ "$got" != "$not_expect" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected NOT [$not_expect], but got it"
+    return 1
+  fi
+}
+
+dip_assert_contains() {
+  local msg="$1" haystack="$2" needle="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: [$haystack] does not contain [$needle]"
+    return 1
+  fi
+}
+
+dip_assert_match() {
+  local msg="$1" str="$2" pattern="$3"
+  if [[ "$str" =~ $pattern ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: [$str] does not match [$pattern]"
+    return 1
+  fi
+}
+
+dip_assert_ok() {
+  local msg="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: command failed: $*"
+    return 1
+  fi
+}
+
+dip_assert_fail() {
+  local msg="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    _dip_test_fail "$msg: command succeeded but should fail: $*"
+    return 1
+  else
+    _dip_test_pass
+  fi
+}
+
+dip_assert_file() {
+  local msg="$1" path="$2"
+  if [[ -f "$path" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: file does not exist: $path"
+    return 1
+  fi
+}
+
+dip_assert_dir() {
+  local msg="$1" path="$2"
+  if [[ -d "$path" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: directory does not exist: $path"
+    return 1
+  fi
+}
+
+dip_assert_empty() {
+  local msg="$1" val="$2"
+  if [[ -z "$val" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected empty, got [$val]"
+    return 1
+  fi
+}
+
+dip_assert_not_empty() {
+  local msg="$1" val="$2"
+  if [[ -n "$val" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected non-empty value"
+    return 1
+  fi
+}
+
+dip_assert_lt() {
+  local msg="$1" a="$2" b="$3"
+  if [[ "$a" -lt "$b" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected $a < $b"
+    return 1
+  fi
+}
+
+dip_assert_le() {
+  local msg="$1" a="$2" b="$3"
+  if [[ "$a" -le "$b" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected $a <= $b"
+    return 1
+  fi
+}
+
+dip_assert_gt() {
+  local msg="$1" a="$2" b="$3"
+  if [[ "$a" -gt "$b" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected $a > $b"
+    return 1
+  fi
+}
+
+dip_assert_ge() {
+  local msg="$1" a="$2" b="$3"
+  if [[ "$a" -ge "$b" ]]; then
+    _dip_test_pass
+  else
+    _dip_test_fail "$msg: expected $a >= $b"
+    return 1
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Utility Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dip_realpath() {
+  local path="$1"
+  if dip_have realpath; then
+    realpath -- "$path" 2>/dev/null
+  elif dip_have greadlink; then
+    # macOS with coreutils
+    greadlink -f -- "$path" 2>/dev/null
+  elif dip_have python3; then
+    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$path"
+  elif dip_have python; then
+    python -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$path"
+  else
+    # Fallback: crude but works for most cases
+    (cd "$(dirname "$path")" 2>/dev/null && printf "%s/%s" "$(pwd -P)" "$(basename "$path")")
+  fi
+}
+
+dip_format_size() {
+  local bytes="$1"
+  if dip_have awk; then
+    awk -v b="$bytes" 'BEGIN {
+      if (b >= 1073741824) printf "%.2f GB", b/1073741824
+      else if (b >= 1048576) printf "%.2f MB", b/1048576
+      else if (b >= 1024) printf "%.2f kB", b/1024
+      else printf "%d B", b
+    }'
+  elif dip_have bc; then
+    if [[ "$bytes" -ge 1073741824 ]]; then
+      printf "%.2f GB" "$(echo "scale=2; $bytes/1073741824" | bc)"
+    elif [[ "$bytes" -ge 1048576 ]]; then
+      printf "%.2f MB" "$(echo "scale=2; $bytes/1048576" | bc)"
+    elif [[ "$bytes" -ge 1024 ]]; then
+      printf "%.2f kB" "$(echo "scale=2; $bytes/1024" | bc)"
+    else
+      printf "%d B" "$bytes"
+    fi
+  else
+    printf "%d B" "$bytes"
+  fi
+}
+
+dip_confirm() {
+  local prompt="${1:-Continue?}" default="${2:-n}"
+  local yn
+
+  if [[ "$default" =~ ^[Yy] ]]; then
+    prompt="$prompt [Y/n] "
+  else
+    prompt="$prompt [y/N] "
+  fi
+
+  printf "%s" "$prompt" >&2
+
+  if [[ -r /dev/tty ]]; then
+    read -r yn </dev/tty
+  else
+    read -r yn
+  fi
+
+  case "$yn" in
+    [Yy]*) return 0 ;;
+    [Nn]*) return 1 ;;
+    "") [[ "$default" =~ ^[Yy] ]] && return 0 || return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+dip_mktemp_dir() {
+  local prefix="${1:-dip}"
+  local dir
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX")
+  # Store for cleanup - caller is responsible for cleanup or use dip_cleanup
+  _DIP_TEMP_DIRS="${_DIP_TEMP_DIRS:-} $dir"
+  printf "%s" "$dir"
+}
+
+# Clean up all temp dirs created by dip_mktemp_dir
+dip_cleanup() {
+  local dir
+  for dir in $_DIP_TEMP_DIRS; do
+    [[ -d "$dir" ]] && rm -rf "$dir"
+  done
+  _DIP_TEMP_DIRS=""
+}
+
+# Register cleanup on EXIT (call once if you want automatic cleanup)
+dip_trap_cleanup() {
+  trap 'dip_cleanup' EXIT
+}
+
+dip_timeout() {
+  local seconds="$1"
+  shift
+  if dip_have timeout; then
+    timeout "$seconds" "$@"
+  elif dip_have gtimeout; then
+    gtimeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Self-Test Runner
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_dip_self_test() {
+  dip_init_colors force
+
+  dip_test_suite "dip internal tests"
+
+  # Color initialization
+  dip_test "colors initialized"
+  dip_assert_not_empty "C_RESET should be set" "$C_RESET"
+
+  # Command detection
+  dip_test "dip_have bash"
+  dip_assert_ok "bash exists" dip_have bash
+
+  dip_test "dip_have nonexistent_cmd_xyz"
+  dip_assert_fail "nonexistent command" dip_have nonexistent_cmd_xyz
+
+  # Format size
+  dip_test "dip_format_size bytes"
+  dip_assert_eq "512 bytes" "$(dip_format_size 512)" "512 B"
+
+  dip_test "dip_format_size kilobytes"
+  dip_assert_match "1024 bytes" "$(dip_format_size 1024)" "^1\.00 kB$"
+
+  dip_test "dip_format_size megabytes"
+  dip_assert_match "1MB" "$(dip_format_size 1048576)" "^1\.00 MB$"
+
+  # Option parsing
+  dip_test "dip_getopt short flag"
+  dip_getopt "v,verbose:flag" -v
+  dip_assert_eq "verbose flag" "$(dip_opt_val verbose)" "1"
+
+  dip_test "dip_getopt long flag"
+  dip_getopt "v,verbose:flag" --verbose
+  dip_assert_eq "verbose flag" "$(dip_opt_val verbose)" "1"
+
+  dip_test "dip_getopt value option"
+  dip_getopt "o,output:val" -o /tmp/out
+  dip_assert_eq "output value" "$(dip_opt_val output)" "/tmp/out"
+
+  dip_test "dip_getopt long value with ="
+  dip_getopt "o,output:val" --output=/tmp/out2
+  dip_assert_eq "output value" "$(dip_opt_val output)" "/tmp/out2"
+
+  dip_test "dip_getopt positional args"
+  dip_getopt "v,verbose:flag" -v file1 file2
+  dip_assert_eq "first arg" "${DIP_ARGS[0]:-}" "file1"
+  dip_assert_eq "second arg" "${DIP_ARGS[1]:-}" "file2"
+
+  dip_test "dip_getopt combined short flags"
+  dip_getopt "a:flag b:flag c:flag" -abc
+  dip_assert_eq "a flag" "$(dip_opt_val a)" "1"
+  dip_assert_eq "b flag" "$(dip_opt_val b)" "1"
+  dip_assert_eq "c flag" "$(dip_opt_val c)" "1"
+
+  dip_test "dip_getopt -- separator"
+  dip_getopt "v,verbose:flag" -v -- --not-a-flag
+  dip_assert_eq "arg after --" "${DIP_ARGS[0]:-}" "--not-a-flag"
+
+  # Assert functions
+  dip_test "dip_assert_contains"
+  dip_assert_contains "hello world" "hello world" "world"
+
+  dip_test "dip_assert_match"
+  dip_assert_match "version string" "v1.2.3" "^v[0-9]+\.[0-9]+\.[0-9]+$"
+
+  dip_test_summary
+}
+
+_dip_run_script_tests() {
+  local dir="${1:-.}"
+  local verbose="${2:-0}"
+  local found=0
+  local passed=0
+  local failed=0
+
+  dip_init_colors force
+  printf "%s━━━ dip test runner ━━━%s\n" "$C_BOLD" "$C_RESET"
+  printf "%sSearching for scripts with --test in: %s%s\n\n" "$C_DIM" "$dir" "$C_RESET"
+
+  local script name
+  for script in "$dir"/*; do
+    [[ -f "$script" && -x "$script" ]] || continue
+    name="$(basename "$script")"
+    [[ "$name" == "dip" ]] && continue
+
+    # Must actually source dip (not just contain --test which matches fish shell etc)
+    if grep -qE '^\s*source.*dip|^\s*\.\s+.*dip' "$script" 2>/dev/null; then
+      if grep -qE 'dip_test|run_tests\s*\(\)' "$script" 2>/dev/null; then
+        found=$((found + 1))
+        printf "%s▶%s Running tests for %s%s%s\n" "$C_CYAN" "$C_RESET" "$C_BOLD" "$name" "$C_RESET"
+
+        if "$script" --test 2>&1; then
+          printf "  %s✓ %s passed%s\n\n" "$C_GREEN" "$name" "$C_RESET"
+          passed=$((passed + 1))
+        else
+          printf "  %s✗ %s failed%s\n\n" "$C_RED" "$name" "$C_RESET"
+          failed=$((failed + 1))
+        fi
+      fi
+    fi
+  done
+
+  printf "%s━━━ Summary ━━━%s\n" "$C_BOLD" "$C_RESET"
+  if [[ "$found" -eq 0 ]]; then
+    printf "%sNo testable scripts found in %s%s\n" "$C_DIM" "$dir" "$C_RESET"
+    printf "%s(Scripts need to source dip and handle --test)%s\n" "$C_DIM" "$C_RESET"
+  else
+    printf "Found: %d, Passed: %s%d%s, Failed: %s%d%s\n" \
+      "$found" \
+      "$C_GREEN" "$passed" "$C_RESET" \
+      "$C_RED" "$failed" "$C_RESET"
+  fi
+
+  return "$failed"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION: Main (when executed directly)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  dip_init_colors
+
+  case "${1:-}" in
+    --help|-h)
+      cat <<EOF
+${C_BOLD}dip${C_RESET} — DoItPoorly shared bash library v${DIP_VERSION}
+
+${C_GOLD}Usage:${C_RESET}
+  ${C_SKY}source "\$(command -v dip)"${C_RESET}   Source in your script
+  ${C_SKY}dip${C_RESET}                         Run tests on scripts in current dir
+  ${C_SKY}dip --self-test${C_RESET}             Run dip's internal tests
+  ${C_SKY}dip --verbose${C_RESET}               Verbose test output
+  ${C_SKY}dip /path/to/dir${C_RESET}            Run tests on scripts in specified dir
+
+${C_GOLD}Features:${C_RESET}
+  • Color definitions (standard + pastel palette)
+  • Logging functions (debug, info, warn, error, die)
+  • Argument parsing (simple and advanced)
+  • Test framework (assert_eq, assert_fail, etc.)
+  • Utility functions (realpath, format_size, confirm)
+  • Usage/help formatting helpers
+  • Environment detection (tty, Wayland, X11, git)
+
+${C_GOLD}Compatibility:${C_RESET}
+  • Bash 3.2+ (macOS default)
+  • Bash 4.x/5.x (Linux)
+
+${C_GOLD}In your script:${C_RESET}
+  ${C_DIM}#!/usr/bin/env bash${C_RESET}
+  ${C_DIM}source "\$(command -v dip)" || { echo "dip not found" >&2; exit 1; }${C_RESET}
+  ${C_DIM}dip_strict${C_RESET}
+  ${C_DIM}dip_init_colors${C_RESET}
+
+${C_GOLD}Test discovery:${C_RESET}
+  Scripts in the same directory that:
+  1. Are executable
+  2. Contain 'source.*dip' or '--test'
+  3. Have a --test handler
+
+  Will be discovered and their tests run.
+
+${C_DIM}Made with questionable judgment by doitpoorly${C_RESET}
+EOF
+      exit 0
+      ;;
+    --version|-V)
+      printf "dip %s\n" "$DIP_VERSION"
+      exit 0
+      ;;
+    --self-test)
+      _dip_self_test
+      exit $?
+      ;;
+    --verbose|-v)
+      export DIP_TEST_VERBOSE=1
+      shift
+      dir="${1:-$(dirname "${BASH_SOURCE[0]}")}"
+      _dip_self_test
+      printf "\n"
+      _dip_run_script_tests "$dir" 1
+      exit $?
+      ;;
+    *)
+      dir="${1:-$(dirname "${BASH_SOURCE[0]}")}"
+      _dip_self_test
+      printf "\n"
+      _dip_run_script_tests "$dir"
+      exit $?
+      ;;
+  esac
+fi
