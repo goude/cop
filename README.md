@@ -19,50 +19,45 @@ No manual path configuration required.
 ## Usage
 
 ```
-Usage:
-  cop [OPTIONS] [FILE...]
+Usage: cop [OPTIONS] [FILE...]
 
-cop automatically uses your system's clipboard tools (pbcopy, wl-copy, xclip, etc.)
-so you don't have to remember which command works on which platform.
+Clipboard helper — auto-selects pbcopy / wl-copy / xclip / OSC 52.
 
 Options:
-  -p  --paste      Paste from clipboard or remote
-  -n  --network    Sync via cloud clipboard service
-  -e  --encrypt    AES-256-CBC encrypt/decrypt ($COP_SECRET)
-  -c  --copy       Also copy fetched data locally (with -n)
-  -t  --tee        Also emit copied payload to stdout
-  -a  --append     Append new content to existing clipboard contents
-  -i  --info       Show clipboard command info
-  -h  --help       Show this help
-      --notes      Open (or create) NOTES.md in current directory
-      --test       Run tests
-      --completions SHELL  Emit shell completions (fish supported)
+  -p  --paste              Paste from clipboard or remote
+  -n  --network            Sync via cloud clipboard service
+  -e  --encrypted          AES-256-CBC encrypt/decrypt ($COP_SECRET)
+  -c  --copy               Also copy fetched data locally (with -n)
+  -t  --tee                Also emit copied payload to stdout
+  -a  --append             Append to existing clipboard contents
+  -i  --info               Show clipboard backend info
+  -h  --help [TOPIC]       This help; topics: examples  templates  network
+      --notes              Open/create NOTES.md in current directory
+      --template NAME      Copy template to current directory
+      --templates          List available templates
+      --test               Run self-tests
+      --completions SHELL  Emit shell completions (fish)
 
-Templates:
-  cop --template .gitignore    copy .gitignore into current directory
-  cop --template NOTES.md      copy NOTES.md into current directory
-  cop --templates              list available templates
+Quick:  echo "hi" | cop    cop file.txt    cop -p    cop -ne file.txt
 
-Examples:
-  echo "hello" | cop      copy text
-  cop file.txt            copy file contents
-  cop < file.txt          copy file contents
+Details:  cop --help examples  |  cop --help templates  |  cop --help network
+```
 
-  cop -p                  paste from clipboard
-  cop -p out.txt          paste into file
-  cop -p > out.txt        paste into file
-  pas                     paste from clipboard (pas is a symlink to cop)
+### Examples
 
-  cop -ne file.txt        encrypt & sync to remote
-  cop -pne                decrypt & paste from remote
+```sh
+echo "hello" | cop      # copy text
+cop file.txt            # copy file contents
+cop dir/                # copy all files in directory
 
-  echo "more" | cop -a    append to existing clipboard
-  cop -a file.txt         append file to existing clipboard
+cop -p                  # paste to stdout
+cop -p out.txt          # paste into file
 
-  ls | cop -s             copy and also print what was copied
+cop -ne file.txt        # encrypt & sync to remote
+cop -pne                # decrypt & paste from remote
 
-  cop --notes             open/create NOTES.md here
-  notes                   same (notes is a symlink to cop)
+echo "more" | cop -a    # append to existing clipboard
+cop --notes             # open/create NOTES.md here
 ```
 
 ## Templates

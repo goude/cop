@@ -47,7 +47,8 @@ do_paste() {
   else
     if ((network)); then
       # raw is base64(plaintext) from the cloud clipboard
-      out=$(printf "%s" "$raw" | b64_decode)
+      # Suppress bash's null-byte-in-command-substitution warning (binary/encrypted data is expected gibberish)
+      { out=$(printf "%s" "$raw" | b64_decode); } 2>/dev/null
     else
       # local clipboard is plain text
       out="$raw"
@@ -139,7 +140,7 @@ main() {
     --info)   info_flag=1 ;;
     --paste)  paste=1 ;;
     --network) network=1 ;;
-    --encrypt) enc=1 ;;
+    --encrypted) enc=1 ;;
     --copy)   copy_flag=1 ;;
     --tee)    stdout_flag=1 ;;
     --append) append=1 ;;
