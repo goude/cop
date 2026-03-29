@@ -131,7 +131,7 @@ ${C_DIM}Clipboard helper — auto-selects pbcopy / wl-copy / xclip / OSC 52.${C_
 ${C_GOLD}Options:${C_RESET}
   ${C_SKY}-p${C_RESET}  --paste              Paste from clipboard or remote
   ${C_SKY}-n${C_RESET}  --network            Sync via cloud clipboard service
-  ${C_SKY}-e${C_RESET}  --encrypt            AES-256-CBC encrypt/decrypt (\$COP_SECRET)
+  ${C_SKY}-e${C_RESET}  --encrypted          AES-256-CBC encrypt/decrypt (\$COP_SECRET)
   ${C_SKY}-c${C_RESET}  --copy               Also copy fetched data locally (with -n)
   ${C_SKY}-t${C_RESET}  --tee                Also emit copied payload to stdout
   ${C_SKY}-a${C_RESET}  --append             Append to existing clipboard contents
@@ -222,7 +222,7 @@ complete -c cop -f
 complete -c cop -s h -l help     -d 'Show help'
 complete -c cop -s p -l paste    -d 'Paste from clipboard or remote'
 complete -c cop -s n -l network  -d 'Sync via cloud clipboard service'
-complete -c cop -s e -l encrypt  -d 'AES-256-CBC encrypt/decrypt ($COP_SECRET)'
+complete -c cop -s e -l encrypted  -d 'AES-256-CBC encrypt/decrypt ($COP_SECRET)'
 complete -c cop -s c -l copy     -d 'Also copy fetched data locally (with -n)'
 complete -c cop -s t -l tee      -d 'Also emit copied payload to stdout'
 complete -c cop -s a -l append   -d 'Append to existing clipboard contents'
