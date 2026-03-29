@@ -8,7 +8,11 @@ kv_send() {
   # Expects: $1 is already base64 (plaintext or ciphertext, depending on mode)
   local data="$1"
   local status
-  status=$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "$data" "$COP_SERVICE_URL")
+  local -a auth_header=()
+  if [[ -n "${COP_WRITE_SECRET:-}" ]]; then
+    auth_header=(-H "Authorization: Bearer ${COP_WRITE_SECRET}")
+  fi
+  status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${auth_header[@]}" --data-binary "$data" "$COP_SERVICE_URL")
   [[ "$status" =~ ^20[01]$ ]] || {
     log "Cloud clipboard POST failed ($status)"
     return 1

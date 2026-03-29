@@ -123,3 +123,58 @@ Drop a file into `lib/cop/templates/`. It becomes immediately available via
 2. Add `source "$LIB/<module>.sh"` to `home/bin/cop` in the appropriate
    position (before any module that depends on it).
 3. Run `home/bin/cop --test` to verify nothing broke.
+
+## Cloudflare Worker
+
+The cloud clipboard (`cop -n`) is backed by a Cloudflare Worker stored in
+`cloudflare/worker.js`. GET (fetch) is public; POST (store) requires a Bearer
+token.
+
+### First-time setup
+
+1. **Create a Worker** in the Cloudflare dashboard (Workers & Pages → Create).
+   Paste the contents of `cloudflare/worker.js` into the editor.
+
+2. **Create a KV namespace** (Workers & Pages → KV → Create namespace).
+   Name it anything (e.g. `COP_STORE`).
+
+3. **Bind the KV namespace** to the worker: Worker Settings → Variables →
+   KV Namespace Bindings → Add binding.
+   - Variable name: `COP_STORE`
+   - KV namespace: the one you just created
+
+4. **Set the write secret**: Worker Settings → Variables → Secrets → Add secret.
+   - Name: `COP_WRITE_SECRET`
+   - Value: a random string (e.g. `openssl rand -hex 32`)
+
+   This secret must be kept out of the repo. It lives only in Cloudflare and
+   in the environment of machines that need to push to the cloud clipboard.
+
+5. **Deploy** the worker. Note the `*.workers.dev` URL.
+
+### Connecting a client machine
+
+The worker URL is hardcoded to `https://cop.daniel-goude.workers.dev/cop` by
+default. Override it with an env var if you deploy your own worker:
+
+```sh
+export COP_SERVICE_URL=https://your-worker.workers.dev/cop
+```
+
+To enable pushing (`cop -n` in copy mode), also set the write secret:
+
+```sh
+export COP_WRITE_SECRET=<the secret you set in Cloudflare>
+```
+
+Fetching (`cop -pn`) works without `COP_WRITE_SECRET` — reads are always
+public.
+
+Add both vars to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to persist
+them across sessions. Do not commit them to any repo.
+
+### Updating the worker
+
+Edit `cloudflare/worker.js`, then paste the updated code into the Cloudflare
+dashboard editor and redeploy (or use `wrangler deploy` if you have the CLI
+set up).
