@@ -4,8 +4,7 @@
 do_notes() {
   local notes_file="NOTES.md"
   if [[ ! -f "$notes_file" ]]; then
-    printf "# NOTES.md\n\n---\n[NOTES.md convention](https://github.com/goude/NOTES.md)\n" >"$notes_file"
-    printf "📋 %sCreated%s %s\n" "$C_MINT" "$C_RESET" "$notes_file" >&2
+    do_template "NOTES.md"
   fi
   local editor="${EDITOR:-vi}"
   exec "$editor" "$notes_file"
