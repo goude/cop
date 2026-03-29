@@ -131,7 +131,8 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
     --help)
-      show_usage
+      shift
+      show_usage "${1:-}"
       exit 0
       ;;
     --notes)  do_notes; exit 0 ;;

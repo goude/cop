@@ -113,54 +113,100 @@ content_stats() {
 
 # --- Help --------------------------------------------------------------------
 show_usage() {
-  show_horizon >&2
-  cat >&2 <<EOF
-${C_GOLD}Usage:${C_RESET}
-  cop [OPTIONS] [FILE...]
+  local topic="${1:-}"
+  case "$topic" in
+    examples)  _show_usage_examples  ;;
+    templates) _show_usage_templates ;;
+    network)   _show_usage_network   ;;
+    *)         _show_usage_short     ;;
+  esac
+}
 
-${C_BOLD}cop${C_RESET} ${C_DIM}automatically uses your system's clipboard tools (pbcopy, wl-copy, xclip, etc.)
-so you don't have to remember which command works on which platform.${C_RESET}
+_show_usage_short() {
+  cat >&2 <<EOF
+${C_GOLD}Usage:${C_RESET} cop [OPTIONS] [FILE...]
+
+${C_DIM}Clipboard helper — auto-selects pbcopy / wl-copy / xclip / OSC 52.${C_RESET}
 
 ${C_GOLD}Options:${C_RESET}
-  ${C_SKY}-p${C_RESET}  --paste      Paste from clipboard or remote
-  ${C_SKY}-n${C_RESET}  --network    Sync via cloud clipboard service
-  ${C_SKY}-e${C_RESET}  --encrypt    AES-256-CBC encrypt/decrypt (\$COP_SECRET)
-  ${C_SKY}-c${C_RESET}  --copy       Also copy fetched data locally (with -n)
-  ${C_SKY}-t${C_RESET}  --tee        Also emit copied payload to stdout
-  ${C_SKY}-a${C_RESET}  --append     Append new content to existing clipboard contents
-  ${C_SKY}-i${C_RESET}  --info       Show clipboard command info
-  ${C_SKY}-h${C_RESET}  --help       Show this help
-  ${C_SKY}  ${C_RESET}  --notes      Open (or create) NOTES.md in current directory
-  ${C_SKY}  ${C_RESET}  --test       Run tests
-  ${C_SKY}  ${C_RESET}  --completions SHELL  Emit shell completions (fish supported)
+  ${C_SKY}-p${C_RESET}  --paste              Paste from clipboard or remote
+  ${C_SKY}-n${C_RESET}  --network            Sync via cloud clipboard service
+  ${C_SKY}-e${C_RESET}  --encrypt            AES-256-CBC encrypt/decrypt (\$COP_SECRET)
+  ${C_SKY}-c${C_RESET}  --copy               Also copy fetched data locally (with -n)
+  ${C_SKY}-t${C_RESET}  --tee                Also emit copied payload to stdout
+  ${C_SKY}-a${C_RESET}  --append             Append to existing clipboard contents
+  ${C_SKY}-i${C_RESET}  --info               Show clipboard backend info
+  ${C_SKY}-h${C_RESET}  --help [TOPIC]       This help; topics: examples  templates  network
+      --notes              Open/create NOTES.md in current directory
+      --template NAME      Copy template to current directory
+      --templates          List available templates
+      --test               Run self-tests
+      --completions SHELL  Emit shell completions (fish)
 
-${C_GOLD}Templates:${C_RESET}
-  ${C_DIM}cop --template .gitignore${C_RESET}    copy .gitignore into current directory
-  ${C_DIM}cop --template NOTES.md${C_RESET}      copy NOTES.md into current directory
-  ${C_DIM}cop --templates${C_RESET}              list available templates
+${C_DIM}Quick:  echo "hi" | cop    cop file.txt    cop -p    cop -ne file.txt${C_RESET}
 
-${C_GOLD}Examples:${C_RESET}
+${C_DIM}Details:  cop --help examples  |  cop --help templates  |  cop --help network${C_RESET}
+EOF
+}
+
+_show_usage_examples() {
+  cat >&2 <<EOF
+${C_GOLD}Examples — cop${C_RESET}
+
+${C_GOLD}Copy:${C_RESET}
   ${C_DIM}echo "hello" | cop${C_RESET}      copy text
   ${C_DIM}cop file.txt${C_RESET}            copy file contents
-  ${C_DIM}cop < file.txt${C_RESET}          copy file contents
+  ${C_DIM}cop < file.txt${C_RESET}          copy via redirect
+  ${C_DIM}cop dir/${C_RESET}                copy all files in directory
 
-  ${C_DIM}cop -p${C_RESET}                  paste from clipboard
+${C_GOLD}Paste:${C_RESET}
+  ${C_DIM}cop -p${C_RESET}                  paste to stdout
   ${C_DIM}cop -p out.txt${C_RESET}          paste into file
-  ${C_DIM}cop -p > out.txt${C_RESET}        paste into file
-  ${C_DIM}pas${C_RESET}                     paste from clipboard (pas is a symlink to cop)
+  ${C_DIM}cop -p > out.txt${C_RESET}        paste via redirect
+  ${C_DIM}pas${C_RESET}                     paste (pas is a symlink to cop)
 
-  ${C_DIM}cop -ne file.txt${C_RESET}        encrypt & sync to remote
-  ${C_DIM}cop -pne${C_RESET}                decrypt & paste from remote
-
+${C_GOLD}Modify:${C_RESET}
   ${C_DIM}echo "more" | cop -a${C_RESET}    append to existing clipboard
   ${C_DIM}cop -a file.txt${C_RESET}         append file to existing clipboard
-
   ${C_DIM}ls | cop -t${C_RESET}             copy and also print what was copied
 
+${C_GOLD}Notes:${C_RESET}
   ${C_DIM}cop --notes${C_RESET}             open/create NOTES.md here
   ${C_DIM}notes${C_RESET}                   same (notes is a symlink to cop)
 
 ${C_DIM}Around the survivors, a perimeter create!${C_RESET}
+EOF
+}
+
+_show_usage_templates() {
+  cat >&2 <<EOF
+${C_GOLD}Templates — cop${C_RESET}
+
+  ${C_DIM}cop --templates${C_RESET}              list available templates
+  ${C_DIM}cop --template .gitignore${C_RESET}    copy .gitignore into current directory
+  ${C_DIM}cop --template .editorconfig${C_RESET} copy .editorconfig into current directory
+  ${C_DIM}cop --template NOTES.md${C_RESET}      copy NOTES.md into current directory
+
+Templates are copied as-is into the current working directory.
+The filename is preserved (including leading dot for dotfiles).
+EOF
+}
+
+_show_usage_network() {
+  cat >&2 <<EOF
+${C_GOLD}Network / Encrypt — cop${C_RESET}
+
+${C_GOLD}Sync:${C_RESET}
+  ${C_DIM}cop -n file.txt${C_RESET}         encrypt-free sync to remote
+  ${C_DIM}cop -pn${C_RESET}                 fetch from remote to stdout
+  ${C_DIM}cop -pnc${C_RESET}                fetch from remote and copy locally
+
+${C_GOLD}Encrypted sync:${C_RESET}
+  export COP_SECRET=mysecret
+  ${C_DIM}cop -ne file.txt${C_RESET}        encrypt & sync to remote
+  ${C_DIM}cop -pne${C_RESET}                decrypt & paste from remote
+
+${C_GOLD}Requires:${C_RESET}  \$COP_KV_URL (kv store endpoint), openssl (for -e)
 EOF
 }
 
